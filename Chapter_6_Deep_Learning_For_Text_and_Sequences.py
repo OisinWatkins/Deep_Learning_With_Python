@@ -379,4 +379,173 @@ if __name__ == '__main__':
 
         plt.show()
 
-    rnn_example()
+    def lstm_example():
+        """
+        This function will seek to improve the results from the previous function by using Long-Short Term Memory layers
+        instead of simple RNN's
+
+        :return: None
+        """
+        # Let's load the data and pad the input sequences to the size required
+        max_features = 10000
+        max_len = 500
+        batch_size = 128
+
+        print("\nLoading data...")
+        (input_train, output_train), (input_test, output_test) = imdb.load_data(num_words=max_features)
+        print(f"{len(input_train)} training sequences")
+        print(f"{len(input_test)} testing sequences")
+
+        print("Pad sequences (samples x time)")
+        input_train = preprocessing.sequence.pad_sequences(input_train, max_len)
+        input_test = preprocessing.sequence.pad_sequences(input_test, max_len)
+        print(f"input_train shape: {input_train.shape}")
+        print(f"input_test shape: {input_test.shape}")
+
+        # Build a simple model using an LSTM layer
+        model = models.Sequential()
+        model.add(layers.Embedding(max_features, 32))
+        model.add(layers.LSTM(32))
+        model.add(layers.Dense(1, activation='sigmoid'))
+
+        model.compile(optimizer='rmsprop', loss='binary_crossentropy', metrics=['acc'])
+        model.summary()
+
+        # Now train the model and plot its performance
+        history = model.fit(input_train, output_train, epochs=10, batch_size=batch_size, validation_split=0.2)
+
+        acc = history.history['acc']
+        val_acc = history.history['val_acc']
+        loss = history.history['loss']
+        val_loss = history.history['val_loss']
+
+        epochs = range(1, len(acc) + 1)
+
+        plt.plot(epochs, acc, 'bo', label='Training Acc')
+        plt.plot(epochs, val_acc, 'b', label='Validation Acc')
+        plt.title('Training and Validation Accuracy vs. Epochs')
+        plt.legend()
+
+        plt.figure()
+
+        plt.plot(epochs, loss, 'bo', label='Training Loss')
+        plt.plot(epochs, val_loss, 'b', label='Validation Loss')
+        plt.title('Training and Validation Loss')
+        plt.legend()
+
+        plt.show()
+
+    def temperature_forecasting_example():
+        """
+        This function will look at a more advanced application for Recurrent Neural Networks: forecasting the
+        temperature based on previous data. More specifically, the goal will be to create a model which uses the
+        weather data from the past to predict the temperature 24hrs from now.
+
+        :return: None
+        """
+        # First let's set up the path to the data
+        data_dir = 'C:\\Datasets\\jena_climate'
+        fname = os.path.join(data_dir, 'jena_climate_2009_2016.csv')
+
+        # Let's open the file, read the data, close the file and then pull the data apart nto more useful structures.
+        f = open(fname)
+        data = f.read()
+        f.close()
+
+        lines = data.split('\n')
+        header = lines[0].split(',')
+        lines = lines[1:]
+
+        print(f"Column headers in the dataset: ")
+        for name in header:
+            print(name)
+
+        print(f"\nThe data is of shape: ({len(lines)}, {len(header)})")
+
+        # Now let's convert all 420,551 lines of data into a Numpy array. For this dataset measurements were taken every
+        # 10 minutes.
+        float_data = np.zeros((len(lines), len(header) - 1))
+        for i, line in enumerate(lines):
+            values = [float(x) for x in line.split(',')[1:]]
+            float_data[i, :] = values
+
+        temp = float_data[:, 1]
+        plt.plot(range(len(temp)), temp)
+        plt.title('Temperature Measurements across Time')
+        plt.xlabel('Sample #')
+        plt.ylabel('Temp (deg C)')
+        plt.show()
+
+        plt.plot(range(1440), temp[:1440])
+        plt.title('Temperature Measurements across 1st 10 Days')
+        plt.xlabel('Sample #')
+        plt.ylabel('Temp (deg C)')
+        plt.show()
+
+        # Now let's prepare the data for presentation to a Neural Network. We'll use the first 200,000 samples for
+        # training, so only pre-process those inputs
+        mean = float_data[:200000].mean(axis=0)
+        float_data -= mean
+        std = float_data[:200000].std(axis=0)
+        float_data /= std
+
+        look_back = 1440
+        step_size = 6
+        delay_size = 144
+        batch = 128
+
+        # Now we'll make a generator that takes the current array of float data and yields batches of data from the
+        # recent past, along with a target temperature in the future. Because the dataset is largely redundant (sample N
+        # and sample N+1 will have most of their timestamps in common), it would be wasteful to explicitly allocate
+        # every sample
+        def generator(data_input, lookback: int, delay: int, min_index: int, max_index: int = None,
+                      shuffle: bool = False, batch_size: int = 128, step: int = 6):
+            if max_index is None:
+                max_index = len(data_input) - delay - 1
+            idx = max_index + lookback
+
+            while True:
+                if shuffle:
+                    rows = np.random.randint(max_index, max_index, size=batch_size)
+                else:
+                    if idx + batch_size >= max_index:
+                        idx = min_index + lookback
+                    rows = np.arange(i, min(i + batch_size, max_index))
+                    idx += len(rows)
+
+                samples = np.zeros((len(rows), lookback // step, data_input.shape[-1]))
+                targets = np.zeros((len(rows),))
+                for idx2, row in enumerate(rows):
+                    indices = range(rows[idx2] - lookback, rows[idx2], step)
+                    samples[idx2] = data[indices]
+                    targets[idx2] = data[rows[idx2] + delay][1]
+
+                yield samples, targets
+
+        train_gen = generator(float_data, look_back, delay_size, min_index=0, max_index=200000, shuffle=True,
+                              step=step_size, batch_size=batch)
+        val_gen = generator(float_data, look_back, delay_size, min_index=200001, max_index=300000, shuffle=False,
+                            step=step_size, batch_size=batch)
+        test_gen = generator(float_data, look_back, delay_size, min_index=300001, max_index=None, shuffle=False,
+                             step=step_size, batch_size=batch)
+
+        val_steps = (300000 - 200001 - look_back)
+        test_steps = (len(float_data) - 300001 - look_back)
+
+        # For the sake of comparison it's often quite valuable to create a deterministic baseline against which to
+        # compare the ML model. In this case of predicting temperature, we can assume that the temperature tomorrow
+        # would be very similar to the temperature today, so using the Mean Absolute Error (MAE) metric we'd expect the
+        # ML model to have a lower MAE than a model which simply states that the temperature tomorrow is the same as the
+        # temperature today.
+        def evaluation_naive_method():
+            batch_maes = []
+            for step in range(val_steps):
+                samples, targets = next(val_gen)
+                preds = samples[:, -1, -1]
+                mae = np.mean(np.abs(preds - targets))
+                batch_maes.append(mae)
+            print(np.mean(batch_maes))
+
+        evaluation_naive_method()
+
+    temperature_forecasting_example()
