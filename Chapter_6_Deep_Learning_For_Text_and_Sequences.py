@@ -9,9 +9,11 @@ This chapter covers:
 
 import os
 import string
+import warnings
 import numpy as np
 import matplotlib.pyplot as plt
 from tensorflow.keras.datasets import imdb
+from tensorflow.keras.optimizers import RMSprop
 from tensorflow.keras import preprocessing
 from tensorflow.keras import models, layers
 from tensorflow.keras.preprocessing.text import Tokenizer
@@ -449,10 +451,10 @@ if __name__ == '__main__':
 
         # Let's open the file, read the data, close the file and then pull the data apart nto more useful structures.
         f = open(fname)
-        data = f.read()
+        data_from_file = f.read()
         f.close()
 
-        lines = data.split('\n')
+        lines = data_from_file.split('\n')
         header = lines[0].split(',')
         lines = lines[1:]
 
@@ -484,10 +486,12 @@ if __name__ == '__main__':
 
         # Now let's prepare the data for presentation to a Neural Network. We'll use the first 200,000 samples for
         # training, so only pre-process those inputs
-        mean = float_data[:200000].mean(axis=0)
-        float_data -= mean
-        std = float_data[:200000].std(axis=0)
-        float_data /= std
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", category=RuntimeWarning)
+            mean = np.mean(float_data[:200000], axis=0)
+            float_data -= mean
+            std = np.std(float_data[:200000], axis=0)
+            float_data /= std
 
         look_back = 1440
         step_size = 6
@@ -502,11 +506,12 @@ if __name__ == '__main__':
                       shuffle: bool = False, batch_size: int = 128, step: int = 6):
             if max_index is None:
                 max_index = len(data_input) - delay - 1
+            assert min_index < max_index
             idx = max_index + lookback
 
             while True:
                 if shuffle:
-                    rows = np.random.randint(max_index, max_index, size=batch_size)
+                    rows = np.random.randint(min_index, max_index, size=batch_size)
                 else:
                     if idx + batch_size >= max_index:
                         idx = min_index + lookback
@@ -516,9 +521,14 @@ if __name__ == '__main__':
                 samples = np.zeros((len(rows), lookback // step, data_input.shape[-1]))
                 targets = np.zeros((len(rows),))
                 for idx2, row in enumerate(rows):
-                    indices = range(rows[idx2] - lookback, rows[idx2], step)
-                    samples[idx2] = data[indices]
-                    targets[idx2] = data[rows[idx2] + delay][1]
+                    slice_begin = max(0, rows[idx2] - lookback)
+                    if slice_begin == 0:
+                        slice_end = lookback
+                    else:
+                        slice_end = rows[idx2]
+                    indices = slice(slice_begin, slice_end, step)
+                    samples[idx2] = data_input[indices]
+                    targets[idx2] = data_input[rows[idx2] + delay][1]
 
                 yield samples, targets
 
@@ -539,13 +549,38 @@ if __name__ == '__main__':
         # temperature today.
         def evaluation_naive_method():
             batch_maes = []
-            for step in range(val_steps):
-                samples, targets = next(val_gen)
-                preds = samples[:, -1, -1]
-                mae = np.mean(np.abs(preds - targets))
-                batch_maes.append(mae)
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", category=RuntimeWarning)
+                for step in range(val_steps):
+                    samples, targets = next(val_gen)
+                    preds = samples[:, -1, -1]
+                    mae = np.nanmean(np.abs(preds - targets))
+                    batch_maes.append(mae)
             print(np.mean(batch_maes))
 
         evaluation_naive_method()
+
+        # In the same way that using a non-ML baseline is useful, it's also quite useful to attempt a simple network
+        # first to establish an ML baseline. This will mean that any further complexity thrown at the problem will be
+        # justified.
+        model = models.Sequential()
+        model.add(layers.Flatten(input_shape=(look_back // step_size, float_data.shape[-1])))
+        model.add(layers.Dense(32, activation='relu'))
+        model.add(layers.Dense(1))
+        model.compile(optimizer=RMSprop(), loss='mae')
+
+        # This is not working at all. Validation is simply failing constantly
+        history = model.fit(train_gen, steps_per_epoch=500, epochs=20, validation_data=val_gen, validation_steps=val_steps)
+
+        loss = history.history['loss']
+        val_loss = history.history['val_loss']
+
+        epochs = range(1, len(loss) + 1)
+
+        plt.plot(epochs, loss, 'bo', label='Training Loss')
+        plt.plot(epochs, val_loss, 'b', label='Validation Loss')
+        plt.title('Training and Validation Loss vs. Epochs')
+        plt.legend()
+        plt.show()
 
     temperature_forecasting_example()
