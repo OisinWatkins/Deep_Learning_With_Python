@@ -570,7 +570,7 @@ if __name__ == '__main__':
         model.compile(optimizer=RMSprop(), loss='mae')
 
         # This is not working at all. Validation is simply failing constantly
-        history = model.fit(train_gen, steps_per_epoch=500, epochs=20, validation_data=val_gen, validation_steps=val_steps)
+        history = model.fit(train_gen, steps_per_epoch=500, epochs=20, validation_data=val_gen, validation_steps=500)
 
         loss = history.history['loss']
         val_loss = history.history['val_loss']
@@ -583,4 +583,96 @@ if __name__ == '__main__':
         plt.legend()
         plt.show()
 
-    temperature_forecasting_example()
+        model = None
+
+        # Now let's try a Recurrent network. Rather than an LSTM, let's try a Gated Recurrent Unit (GRU), which work
+        # using the same principals as LSTM's but are somewhat streamlined and thus cheaper to run.
+        model = models.Sequential()
+        model.add(layers.GRU(32, input_shape=(None, float_data.shape[-1])))
+        model.add(layers.Dense(1))
+        model.compile(optimizer=RMSprop(), loss='mae')
+
+        # This is not working at all. Validation is simply failing constantly, and it takes a year to complete.
+        history = model.fit(train_gen, steps_per_epoch=500, epochs=20, validation_data=val_gen,
+                            validation_steps=val_steps)
+
+        loss = history.history['loss']
+        val_loss = history.history['val_loss']
+
+        epochs = range(1, len(loss) + 1)
+
+        plt.plot(epochs, loss, 'bo', label='Training Loss')
+        plt.plot(epochs, val_loss, 'b', label='Validation Loss')
+        plt.title('Training and Validation Loss vs. Epochs')
+        plt.legend()
+        plt.show()
+
+        # Given that these networks do not appear to be training as expected, I will now simply list the remaining
+        # network topographies that can be used for this problem and give a few words to why they work.
+
+        # We're already familiar with the idea of dropout for deep neural networks. However, applying a random dropout
+        # mask to the recurrent branch of the network will greatly disrupt the signal on the feedback loop and hinder
+        # training. The correct approach is to apply a temporally constant dropout mask to the feedback loop, allowing
+        # the network to train with the presence of the error signal and avoid overfitting. Hence there are 2 dropout
+        # values: one for the input and one for the feedback loop.
+        model = models.Sequential()
+        model.add(layers.GRU(32, dropout=0.2, recurrent_dropout=0.2, input_shape=(None, float_data.shape[-1])))
+        model.add(layers.Dense(1))
+        model.compile(optimizer=RMSprop(), loss='mae')
+
+        # Depending on the overfitting performance of the previous designs, the next tactic is to increase the capacity
+        # of the network, achieved by adding more units to layers and more layers to the network. Note that when
+        # stacking recurrent layers you must ensure that intermediate layers return their entire sequence output, rather
+        # than just the last output
+        model = models.Sequential()
+        model.add(layers.GRU(32, dropout=0.2, recurrent_dropout=0.2, return_sequences=True,
+                             input_shape=(None, float_data.shape[-1])))
+        model.add(layers.GRU(64, dropout=0.1, recurrent_dropout=0.5))
+        model.add(layers.Dense(1))
+        model.compile(optimizer=RMSprop(), loss='mae')
+
+        # Now we could try increasing the complexity of the network design. Here we'll attempt the use of a
+        # bi-directional RNN. This layout (having 2 RNN's working together, one processing the data in chronological
+        # order and one in antichronological order) works incredibly well on time-sensitive or order-sensitive data, and
+        # as such they are the go-to for natural language processing problems. By viewing the input sequence both ways
+        # the system can learn to detect patterns that may go overlooked in unidirectional processing. However they do
+        # run into problems on sequences data where the recent past is much more informative than the beginning of the
+        # sequence.
+        model = models.Sequential()
+        model.add(layers.Bidirectional(layers.GRU(32), input_shape=(None, float_data.shape[-1])))
+        model.add(layers.Dense(1))
+        model.compile(optimizer=RMSprop(), loss='mae')
+
+    def one_dim_convenet_example():
+        """
+        This function will revisit some previous examples and demonstrate the usefulness and applications of 1D convnets
+        for text and sequence learning.
+
+        :return: None
+        """
+        max_features = 10000
+        max_len = 500
+
+        # Extract the data
+        print("Loading Data...")
+        (x_train, y_train), (x_test, y_test) = imdb.load_data(num_words=max_features)
+
+        # Turns the lists of integers into 2D integer tensors of shape (samples, max_len)
+        print("Pad Sequences: (samples x time)")
+        x_train = preprocessing.sequence.pad_sequences(x_train, max_len)
+        x_test = preprocessing.sequence.pad_sequences(x_test, max_len)
+        print(f"x_train shape: {x_train.shape}")
+        print(f"x_test shape: {x_test.shape}")
+
+        model = models.Sequential()
+        model.add(layers.Embedding(max_features, 128, input_length=max_len))
+        model.add(layers.Conv1D(32, 7, activation='relu'))
+        model.add(layers.MaxPooling1D(5))
+        model.add(layers.Conv1D(32, 7, activation='relu'))
+        model.add(layers.GlobalMaxPool1D())
+        model.add(layers.Dense(1))
+
+        model.compile(optimizer=RMSprop(lr=1e-4), loss='binary_crossentropy', metrics=['acc'])
+        model.summary()
+
+    one_dim_convenet_example()
