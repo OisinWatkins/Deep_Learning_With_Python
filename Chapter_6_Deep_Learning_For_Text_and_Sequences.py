@@ -675,4 +675,67 @@ if __name__ == '__main__':
         model.compile(optimizer=RMSprop(lr=1e-4), loss='binary_crossentropy', metrics=['acc'])
         model.summary()
 
+        history = model.fit(x_train, y_train, epochs=8, batch_size=128, validation_split=0.2)
+
+        acc = history.history['acc']
+        val_acc = history.history['val_acc']
+        loss = history.history['loss']
+        val_loss = history.history['val_loss']
+
+        epochs = range(1, len(loss) + 1)
+
+        plt.plot(epochs, acc, 'bo', label='Training Accuracy')
+        plt.plot(epochs, val_acc, 'b', label='Validation Accuracy')
+        plt.title('Training and Validation Accuracy vs. Epochs')
+        plt.legend()
+
+        plt.figure()
+
+        plt.plot(epochs, loss, 'bo', label='Training Loss')
+        plt.plot(epochs, val_loss, 'b', label='Validation Loss')
+        plt.title('Training and Validation Loss vs. Epochs')
+        plt.legend()
+        plt.show()
+
+        evaluations = model.evaluate(x_test, y_test)
+        print(f"Loss: {evaluations[0]}\tAccuracy: {evaluations[1] * 100}%")
+
+        # The previous example shows how 1D convnets can be used to replace simple networks that Flatten the input
+        # sequence, providing a cheaper alternative for competitive performance. The following examples work on the jena
+        # climate data from the previous example. Given the amount of issues faced in that function, this function will
+        # instead simply list the model topographies used and provide their summaries
+
+        float_data = np.zeros((1, 1))
+
+        # This first approach takes the simplest road possible, providing a suitable benchmark. This model, given it's
+        # low representational space, will likely overfit very strongly.
+        model = models.Sequential()
+        model.add(layers.Conv1D(32, 5, activation='relu', input_shape=(None, float_data.shape[-1])))
+        model.add(layers.MaxPooling1D(3))
+        model.add(layers.Conv1D(32, 5, activation='relu'))
+        model.add(layers.MaxPooling1D(3))
+        model.add(layers.Conv1D(32, 5, activation='relu'))
+        model.add(layers.GlobalMaxPool1D())
+        model.add(layers.Dense(1))
+
+        model.summary()
+
+        # This second approach utilises 1D convnets to simplify the sequence data coming into the network before passing
+        # the learned features on to the RNN section of the network. This should mean that the RNN is now learning to
+        # predict future data based data with higher representational power.
+        model = models.Sequential()
+        model.add(layers.Conv1D(32, 5, activation='relu', input_shape=(None, float_data.shape[-1])))
+        model.add(layers.MaxPooling1D(3))
+        model.add(layers.Conv1D(32, 5, activation='relu'))
+        model.add(layers.GRU(32, dropout=0.1, recurrent_dropout=0.5))
+        model.add(layers.Dense(1))
+
+        model.summary()
+
+    one_hot_encode_eg()
+    word_embedding_eg()
+    pre_trained_embedding_with_imdb()
+    rnn_example()
+    lstm_example()
+    temperature_forecasting_example()
     one_dim_convenet_example()
