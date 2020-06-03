@@ -143,6 +143,67 @@ if __name__ == '__main__':
                           'gender': gender_targets},
                   epochs=10, batch_size=64)
 
+    def inception_eg():
+        """
+        This function will use the keras functional API to build a simple Inception module. Inception modules come
+        packaged as standard with Keras, however this function will detail how they can be built if a more custom module
+        is needed
+
+        :return: None
+        """
+
+        # placeholder input, not really necessary for this example
+        x = Input(shape=(None,), dtype=float)
+
+        # Create the 1st branch which performs a simple Conv2D operation with a kernel 1x1 in size
+        branch_a = layers.Conv2D(128, 1, activation='relu', strides=2)(x)
+
+        # Create the 2nd branch which performs a simple Conv2D operation with a kernel 1x1 in size, and then a
+        # subsequent Conv2D with both a larger kernel and a larger step-size
+        branch_b = layers.Conv2D(128, 1, activation='relu')(x)
+        branch_b = layers.Conv2D(128, 3, activation='relu', strides=2)(branch_b)
+
+        # Create the 3rd branch which performs an average pooling operation first, and then a
+        # subsequent Conv2D operation.
+        branch_c = layers.AveragePooling2D(3, strides=2)(x)
+        branch_c = layers.Conv2D(128, 3, activation='relu', strides=2)(branch_c)
+
+        # Create the 4th branch, which is the deepest of all 4.
+        branch_d = layers.Conv2D(128, 1, activation='relu')(x)
+        branch_d = layers.Conv2D(128, 3, activation='relu')(branch_d)
+        branch_d = layers.Conv2D(128, 3, activation='relu', strides=2)(branch_d)
+
+        # Concatenate the outputs from each branch to create the output for the whole module.
+        output = layers.concatenate([branch_a, branch_b, branch_c, branch_d], axis=-1)
+
+    def residual_eg():
+        """
+        The function will use the functional API to demonstrate how residual connections can be made in an acyclic graph
+
+        :return: None
+        """
+
+        # placeholder input tensor
+        x = Input(shape=(None,), dtype=float)
+
+        # Example using simple add layer
+        y = layers.Conv2D(128, 3, activation='relu', padding='same')(x)
+        y = layers.Conv2D(128, 3, activation='relu', padding='same')(y)
+        y = layers.Conv2D(128, 3, activation='relu', padding='same')(y)
+
+        y = layers.add([y, x])
+
+        # Example using a separate residual branch with its own transformation
+        y = layers.Conv2D(128, 3, activation='relu', padding='same')(x)
+        y = layers.Conv2D(128, 3, activation='relu', padding='same')(y)
+        y = layers.MaxPooling2D(2, strides=2)(y)
+
+        residual = y = layers.Conv2D(128, 1, strides=2, padding='same')(x)
+        y = layers.add([y, residual])
+
+
     # functional_api_eg()
     # multi_input_model_eg()
     # multi_output_model_eg()
+    # inception_eg()
+    # residual_eg()
