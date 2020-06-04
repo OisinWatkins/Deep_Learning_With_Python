@@ -10,6 +10,8 @@ This chapter covers:
 import numpy as np
 from tensorflow.keras import models, layers
 from tensorflow.keras import Input, applications, callbacks
+from tensorflow.keras.datasets import imdb
+from tensorflow.keras.preprocessing import sequence
 
 if __name__ == '__main__':
     """
@@ -331,6 +333,45 @@ if __name__ == '__main__':
                 np.savez(f, activations)
                 f.close()
 
+    def tensorboard_eg():
+        """
+        To do good research or to build good models, you need rich, frequent feedback about what's going on inside your
+        model during experiments. Keras is designed to bring a developer from "Idea" to "Experiment" in as short a time
+        as possible. Tensorboard is a browser-based data visualisation tool designed with neural network training in
+        mind. For example, Tensorboard allows you to:
+            -> Visually monitor metrics during training
+            -> Visualise your model architecture
+            -> Visualise histograms of activations and gradients
+            -> Explore embeddings in 3D
+
+        Let's demonstrate Tensorboard's usefulness by training a simple 1D convnet on the IMDB dataset. (Experiencing a
+        lot of compatibility issues)
+
+        :return: None
+        """
+
+        max_features = 2000
+        max_len = 500
+
+        (x_train, y_train), (x_test, y_test) = imdb.load_data(num_words=max_features)
+        x_train = sequence.pad_sequences(x_train, maxlen=max_len)
+        x_test = sequence.pad_sequences(x_test, maxlen=max_len)
+
+        model = models.Sequential()
+        model.add(layers.Embedding(max_features, 128, input_length=max_len, name='embed'))
+        model.add(layers.Conv1D(32, 7, activation='relu'))
+        model.add(layers.MaxPooling1D(5))
+        model.add(layers.Conv1D(32, 7, activation='relu'))
+        model.add(layers.GlobalMaxPool1D())
+        model.add(layers.Dense(1))
+
+        model.summary()
+        model.compile(optimizer='rmsprop', loss='binary_crossentropy', metrics=['acc'])
+
+        callbacks_list = [callbacks.TensorBoard(log_dir="C:\\Datasets\\IMDB\\my_log_dir",
+                                                histogram_freq=1)]  # embeddings_freq=1
+        history = model.fit(x_train, y_train, epochs=20, batch_size=128, validation_split=0.2, callbacks=callbacks_list)
+
 
     # functional_api_eg()
     # multi_input_model_eg()
@@ -339,3 +380,5 @@ if __name__ == '__main__':
     # residual_eg()
     # layer_weight_sharing()
     # models_as_layers()
+    # examples_of_training_callbacks()
+    # tensorboard_eg()
