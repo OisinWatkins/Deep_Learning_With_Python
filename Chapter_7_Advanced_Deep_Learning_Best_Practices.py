@@ -9,7 +9,7 @@ This chapter covers:
 """
 import numpy as np
 from tensorflow.keras import models, layers
-from tensorflow.keras import Input, applications
+from tensorflow.keras import Input, applications, callbacks
 
 if __name__ == '__main__':
     """
@@ -252,6 +252,84 @@ if __name__ == '__main__':
         merged_features = layers.concatenate([left_features, right_features], axis=-1)
 
         # Now build the rest of the model.
+
+    def examples_of_training_callbacks():
+        """
+        This function will go into detail on how to modify the callback settings for a training cycle. The callbacks
+        supported by Keras include, but are not limited to the following:
+            -> keras.callbacks.ModelCheckpoint
+            -> keras.callbacks.EarlyStopping
+            -> keras.callbacks.LearningRateScheduler
+            -> keras.callbacks.ReduceLROnPlateau
+            -> keras.callbacks.CSVLogger
+        As examples, we'll now detail the use of EarlyStopping and ReduceLROnPlateau
+
+        :return: None
+        """
+
+        # Make some mock training data and a simple dense model for the sake of this example
+        x_train = []
+        y_train = []
+        tmp_model = models.Sequential()
+        tmp_model.add(layers.Dense(1, activation='sigmoid', input_shape=(256, 256)))
+
+        # The first callback list is designed to interrupt the training if the training accuracy stops improving for
+        # more that 1 epochs, and to save the model any time the validation loss improves (the model will only be
+        # overwritten if the validation loss improves)
+        callbacks_list = [callbacks.EarlyStopping(monitor='acc', patience=1),
+                          callbacks.ModelCheckpoint(filepath='my_model.h5', monitor='loss_val', save_best_only='True')]
+
+        # Now compile and train the network. The callbacks monitor accuracy, so you should do so as well. Given that the
+        # callbacks also monitor validation loss the training must incorporate validation.
+        tmp_model.compile(optimizer='rmsprop', loss='binary_crossentropy', metrics=['acc'])
+        tmp_model.fit(x_train, y_train, epochs=10, callbacks=callbacks_list, validation_split=0.2)
+
+        # This callback list is designed to dynamically change the learning rate if the validation loss stops improving
+        # for 10 epochs. Note that the factor value will accumulate for every count on the towards the patience limit
+        # (i.e: after 10 epochs of no improvement the LR will be divided by 10)
+        callbacks_list = [callbacks.ReduceLROnPlateau(monitor='val_loss', factor=0.1, patience=10)]
+
+        # Compile and train the model. Note again that the callback monitors validation loss so validation must occur
+        # during training.
+        tmp_model.compile(optimizer='rmsprop', loss='binary_crossentropy', metrics=['acc'])
+        tmp_model.fit(x_train, y_train, epochs=10, callbacks=callbacks_list, validation_split=0.2)
+
+        # Now let's try writing a custom callback. Building a subclass is supported by transparently named methods,
+        # including: "on_epoch_begin", "on_epoch_end", "on_batch_begin", "on_batch_end", "on_train_being",
+        # "on_train_end".
+        class ActivationLogger(callbacks.Callback):
+            """
+            This callback is designed to save the activations of each layer in the model when provided a validation
+            sample into a .npz file at the end of every epoch.
+            """
+            def set_model(self, model):
+                """
+                This function creates a new model using the activations of each layer in the model provided as the
+                outputs.
+
+                :param model: keras Model being trained
+                :return: None
+                """
+                self.model = model
+                layer_outputs = [layer.output for layer in model.layers]
+                self.activations_model = models.Model(model.input, layer_outputs)
+
+            def on_epoch_end(self, epoch, logs=None):
+                """
+                This functions writes the activation outputs from the activations model when given a validation sample
+                into a unique .npz file.
+
+                :param epoch: Epoch Number
+                :param logs: Event logs
+                :return: None
+                """
+                if self.validation_data is None:
+                    raise RuntimeError('Requires validation_data.')
+                validation_sample = self.validation_data[0][0:1]
+                activations = self.activations_model.predict(validation_sample)
+                f = open('activations_at_epoch_' + str(epoch) + '.npz', 'w')
+                np.savez(f, activations)
+                f.close()
 
 
     # functional_api_eg()
