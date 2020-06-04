@@ -9,7 +9,7 @@ This chapter covers:
 """
 import numpy as np
 from tensorflow.keras import models, layers
-from tensorflow.keras import Input
+from tensorflow.keras import Input, applications
 
 if __name__ == '__main__':
     """
@@ -201,9 +201,63 @@ if __name__ == '__main__':
         residual = y = layers.Conv2D(128, 1, strides=2, padding='same')(x)
         y = layers.add([y, residual])
 
+    def layer_weight_sharing():
+        """
+        In the example provided we'll make a simple network designed to compare the semantic relationship between 2
+        sentences and provide a score between 0 (totally different) and 1 (identical in meaning). Here we don't want to
+        have 2 different that learn independent transformations. It would instead be more useful to have 1 layer be
+        reused, learning only one set of transformations to be used on both input sentences (a.k.a. a Siamese Model)
+
+        :return: None
+        """
+        left_data = []
+        right_data = []
+        targets = []
+
+        # Single LSTM layer which will be used in bith data paths
+        lstm = layers.LSTM(32)
+
+        # Left data lane
+        left_input = Input(shape=(None, 128))
+        left_output = lstm(left_input)
+
+        # Right data lane
+        right_input = Input(shape=(None, 128))
+        right_output = lstm(right_input)
+
+        # Merge outputs and create predictions
+        merged = layers.concatenate([left_output, right_output], axis=-1)
+        predictions = layers.Dense(1, activation='sigmoid')(merged)
+
+        model = models.Model([left_input, right_input], predictions)
+        model.fit([left_data, right_data], targets)
+
+    def models_as_layers():
+        """
+        Similar to the previous example, we can use entire models an arbitrary number of times in a single model. This
+        can be quite useful in certain applications, for example here we use a Siamese model to process 2 camera inputs
+        using pre-learned representations. From there we could add a dense head to also calculate the distance to any
+        detected object
+
+        :return: None
+        """
+        xception_base = applications.Xception(weights=None, include_top=False)
+
+        left_input = Input(shape=(255, 255, 3))
+        right_input = Input(shape=(255, 255, 3))
+
+        left_features = xception_base(left_input)
+        right_features = xception_base(right_input)
+
+        merged_features = layers.concatenate([left_features, right_features], axis=-1)
+
+        # Now build the rest of the model.
+
 
     # functional_api_eg()
     # multi_input_model_eg()
     # multi_output_model_eg()
     # inception_eg()
     # residual_eg()
+    # layer_weight_sharing()
+    # models_as_layers()
