@@ -345,7 +345,7 @@ if __name__ == '__main__':
             -> Explore embeddings in 3D
 
         Let's demonstrate Tensorboard's usefulness by training a simple 1D convnet on the IMDB dataset. (Experiencing a
-        lot of compatibility issues)
+        lot of compatibility issues) https://www.tensorflow.org/tensorboard/get_started
 
         :return: None
         """
@@ -372,6 +372,85 @@ if __name__ == '__main__':
                                                 histogram_freq=1)]  # embeddings_freq=1
         history = model.fit(x_train, y_train, epochs=20, batch_size=128, validation_split=0.2, callbacks=callbacks_list)
 
+    def getting_the_most_from_your_model():
+        """
+        This function will go into techniques that will pull your models from a "works okay" level to "wins ML
+        competitions" level. Each technique will be given a few lines of code and some comments to describe how the work
+        and where they're useful.
+
+        :return: None
+        """
+
+        # Technique No.1: Batch Normalisation
+        #   Normalisation is a broad category of methods that seek to make different samples seen by a model more
+        #   similar to each other, which help the model generalise well to new data. A very common form of normailsation
+        #   is one we've used many times in this project so far: Subtracting the mean and dividing by the standard
+        #   deviation. This method assumes the data has a Guassian distribution, and yields data which is zero-centered
+        #   with unit variance. Do be aware of the axis parameter in the BatchNormailzation layer, it defaults to -1,
+        #   which is the correct value for almost every layer type, however this may change for custom layers.
+        data = np.zeros(shape=(1, 1))
+        normailsed_data = (data - np.mean(data, axis=...)) / np.std(data, axis=...)
+
+        # So far batch normailsation has only been used on input data, however for very deep models normalisation is
+        # helpful/required for avoiding vanishing gradient and ensuring that no transformation pushes the data into a
+        # non-zero-centered batch with variance > 1
+        conv_model = models.Sequential()
+        conv_model.add(layers.Conv2D(32, 3, activation='relu'))
+        conv_model.add(layers.BatchNormalization())
+
+        dense_model = models.Sequential()
+        dense_model.add(layers.Conv2D(32, 3, activation='relu'))
+        dense_model.add(layers.BatchNormalization())
+
+        # A more experimental method that seems to show a lot of promise is the use of seperable Conv2D layers in place
+        # of regular Conv2D layers. These layers have shown that they result in faster, lighter-weight models that learn
+        # better representations due to their more data efficient transformation.
+        sep_model = models.Sequential()
+
+        sep_model.add(layers.SeparableConv2D(32, 3, activation='relu', input_shape=(64, 64, 3)))
+        sep_model.add(layers.SeparableConv2D(64, 3, activation='relu'))
+        sep_model.add(layers.MaxPooling2D(2))
+
+        sep_model.add(layers.SeparableConv2D(64, 3, activation='relu', input_shape=(64, 64, 3)))
+        sep_model.add(layers.SeparableConv2D(128, 3, activation='relu'))
+        sep_model.add(layers.MaxPooling2D(2))
+
+        sep_model.add(layers.SeparableConv2D(64, 3, activation='relu', input_shape=(64, 64, 3)))
+        sep_model.add(layers.SeparableConv2D(128, 3, activation='relu'))
+        sep_model.add(layers.GlobalAveragePooling2D())
+
+        sep_model.add(layers.Dense(32, activation='relu'))
+        sep_model.add(layers.Dense(10, activation='softmax'))
+
+        sep_model.compile(optimizer='rmsprop', loss='categorical_crossentropy')
+        sep_model.summary()
+
+        # Hyperparameter tuning is a very powerful technique for better results with your model, however there are no
+        # hard and fast rules, or even equations that can really solve the problem, given that essentially no output
+        # metric has a direct or differentiable relationship to the hyperparameters. Normally people use intuition and
+        # guess repeatedly at the correct hyperparameters and this usually works out well. There are tools to help:
+        #   -> https://github.com/hyperopt/hyperopt
+        #   -> https://github.com/maxpumperla/hyperas
+        # Be careful with these tools, overfitting to the validation data is always likely.
+
+        # Another powerful tool is model ensembling, where we use multiple models to make their own independent
+        # predictions on the input data and then combine these predictions before making the final prediction. This is
+        # nearly always the method that creates competition-winning models, although the fine details of each ensemble
+        # must either be learned or guessed at empirically. Diversity is key for this technique, the more different each
+        # model is, and the better each model is on its own, the better the end result tends to be.
+        model_a = models.Sequential()
+        model_b = models.Sequential()
+        model_c = models.Sequential()
+        model_d = models.Sequential()
+
+        preds_a = model_a.predict(x=np.zeros(shape=(1, 1)))
+        preds_b = model_a.predict(x=np.zeros(shape=(1, 1)))
+        preds_c = model_a.predict(x=np.zeros(shape=(1, 1)))
+        preds_d = model_a.predict(x=np.zeros(shape=(1, 1)))
+
+        # All weight values are assumed to be learned empirically.
+        final_pred = 0.25 * (preds_a + preds_b + preds_c + preds_d)
+        final_pred = (0.5 * preds_a) + (0.25 * preds_b) + (0.1 * preds_c) + (0.15 * preds_d)
 
     # functional_api_eg()
     # multi_input_model_eg()
