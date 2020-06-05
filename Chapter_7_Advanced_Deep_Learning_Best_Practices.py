@@ -461,3 +461,4 @@ if __name__ == '__main__':
     # models_as_layers()
     # examples_of_training_callbacks()
     # tensorboard_eg()
+    # getting_the_most_from_your_model()
