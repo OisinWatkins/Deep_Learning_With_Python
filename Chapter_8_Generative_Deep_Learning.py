@@ -11,10 +11,9 @@ This chapter covers:
 import sys
 import numpy as np
 from PIL import Image
-from matplotlib import cm
 from tensorflow import keras
 from tensorflow.keras import models, layers
-from tensorflow.keras.applications import inception_v3
+from tensorflow.keras.applications import inception_v3, vgg19
 from tensorflow.keras import backend as K
 from tensorflow.keras.preprocessing import image
 
@@ -156,7 +155,7 @@ if __name__ == '__main__':
         model.save(filepath='C:\\Datasets\\Nietzsche\\text_generation_model.h5')
 
     """
-    We're going to define a bunch of auxiliary functions before using deep_dream()
+    We're going to define a bunch of auxiliary functions before using either deep_dream() or neural_style_transfer
     """
     def resize_img(img, size):
         """
@@ -166,7 +165,7 @@ if __name__ == '__main__':
         :param size: Desired Size
         :return: The input image resized to the desired size as np array.
         """
-        pil_img = deprocess_image(img)
+        pil_img = deprocess_image_inception(img)
         factors = (float(size[0]) / img.shape[1],
                    float(size[1]) / img.shape[2])
         return np.array(img.resize(factors))
@@ -179,10 +178,10 @@ if __name__ == '__main__':
         :param fname: Filename for the new image
         :return: None
         """
-        pil_image = deprocess_image(np.copy(img))
+        pil_image = deprocess_image_inception(np.copy(img))
         pil_image.save(fname)
 
-    def preprocess_image(image_path):
+    def preprocess_image_inception(image_path):
         """
         Preprocess the image using the inception_v3 preprocess function.
 
@@ -195,7 +194,22 @@ if __name__ == '__main__':
         img = inception_v3.preprocess_input(img)
         return img
 
-    def deprocess_image(x):
+    def preprocess_image_vgg19(image_path, img_h, img_w):
+        """
+        Preprocess the image using the VGG19 preprocess function.
+
+        :param image_path: Path to the image
+        :param img_h: The height of the desired processed image
+        :param img_w: The width of the desired processed image
+        :return: The preprocessed img using the VGG19 network
+        """
+        img = image.load_img(image_path, target_size=(img_h, img_w))
+        img = image.img_to_array(img)
+        img = np.expand_dims(img, axis=0)
+        img = vgg19.preprocess_input(img)
+        return img
+
+    def deprocess_image_inception(x):
         """
         This function takes a normalised image input and deprocesses it to image compatible values.
 
@@ -213,6 +227,23 @@ if __name__ == '__main__':
         x *= 255.0
         x = np.clip(x, 0, 255).astype('uint8')
         return Image.fromarray(x)
+
+    def deprocess_image_vgg19(x):
+        """
+        This function takes a normalised image input and deprocesses it to image compatible values.
+
+        :param x: A normalised input tensor representing an image.
+        :return: An image-viewer compatible version of the input
+
+        :param x:
+        :return:
+        """
+        x[:, :, 0] += 103.939
+        x[:, :, 1] += 116.779
+        x[:, :, 2] += 123.68
+        x = x[:, :, ::-1]
+        x = np.clip(x, 0, 255).astype('uint8')
+        return x
 
     """
     End of auxiliary functions
@@ -319,7 +350,7 @@ if __name__ == '__main__':
         base_image_path = '/European_Landscape.jpg'
 
         # Load the base image into Numpy array.
-        img = preprocess_image(base_image_path)
+        img = preprocess_image_inception(base_image_path)
 
         # Prepare a list of shape tuples defining the different scales at which to run gradient ascent.
         original_shape = img.shape[1:3]
@@ -360,6 +391,91 @@ if __name__ == '__main__':
 
         # Save the final dream.
         save_img(img, fname='/Final_Dream.png')
+
+    def neural_style_transfer():
+        """
+        Another field of study that arose in the summer of 2015 was the idea of Neural Style Transfer. Style transfer
+        involves applying the style of a reference image to a target image while preserving the content of the target
+        image. "Style" in the context of an image can mean colours and textures and patterns , whereas the content is
+        the higher level macrostructure of the image.
+
+        As with any deep-learning objective, the first job is to define a loss function which we will seek to minimise
+        this through training. If we were able to mathematically define "content" and "style", then an appropriate loss
+        function to minimise would be:
+            loss =   distance(style(reference_image) - style(generated_image))
+                   + distance(content(original_image) - content(generated_image))
+
+        For this example we'll use the VGG19 network, given it's a relatively simple pretrained network.
+
+        :return: None
+        """
+        # Provide the paths to the required images
+        target_image_path = '/European_Landscape.jpg'
+        style_reference_image_path = '/Landscape_Art_Reference.jpg'
+
+        # Extract the dimensions of the target image, use them to determine the size of the generated image.
+        width, height = image.load_img(target_image_path).size
+        img_height = 400
+        img_width = int(width * img_height / height)
+
+        # Define constants for the reference images and a placeholder for the generated image
+        target_image = K.constant(preprocess_image_vgg19(target_image_path, img_h=img_height, img_w=img_width))
+        style_reference_image = K.constant(preprocess_image_vgg19(style_reference_image_path, img_h=img_height,
+                                                                  img_w=img_width))
+        combination_image = K.placeholder((1, img_height, img_width, 3))
+
+        # Combine the 3 images in a single branch. Then load the VGG19 model without the dense classifier, using the
+        # input_tensor as the input to the model.
+        input_tensor = K.concatenate([target_image, style_reference_image, combination_image], axis=0)
+        model = vgg19.VGG19(input_tensor=input_tensor, weights='imagenet', include_top=False)
+        print("Model Loaded.\n")
+
+        # Now let's define the loss functions for this application.
+        def content_loss(base, combination):
+            """
+            This function computes the L2 distance between the generated image and the content reference image
+
+            :param base: The Content reference image
+            :param combination: The generated image
+            :return: The L2 distance between the combination image and the base image
+            """
+            return K.sum(K.square(combination - base))
+
+        def gram_matrix(x):
+            """
+            Computes the inner product of the correlation matrix of the feature maps of a given layer
+
+            :param x: Activations of a given layer in the network.
+            :return: The gram matrix computed on x
+            """
+            features = K.batch_flatten(K.permute_dimensions(x, (2, 0, 1)))
+            gram = K.dot(features, K.transpose(features))
+            return gram
+
+        def style_loss(style, combination):
+            """
+            Computes the style loss of the generated image using the gram matrix function defined above.
+
+            :param style:
+            :param combination:
+            :return:
+            """
+            S = gram_matrix(style)
+            C = gram_matrix(combination)
+            channels = 3
+            size = img_height * img_width
+            return K.sum(K.square(S - C)) / (4.0 * (channels ** 2) * (size ** 2))
+
+        def total_variation_loss(x):
+            """
+            Compute the total variation loss of the input.
+
+            :param x: Input Value
+            :return: Variation Loss
+            """
+            a = K.square(x[:, :img_height - 1, :img_width - 1, :] - x[:, 1:, :img_width-1, :])
+            b = K.square(x[:, :img_height - 1, :img_width - 1, :] - x[:, :img_height-1, 1:, :])
+            return K.sum(K.pow(a + b, 1.25))
 
 
     # text_generation()
