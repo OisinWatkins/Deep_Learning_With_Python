@@ -9,6 +9,8 @@ This chapter covers:
     -> Understanding Generative Adversarial Networks
 """
 import sys
+import time
+from scipy.optimize import fmin_l_bfgs_b
 import numpy as np
 from PIL import Image
 from tensorflow import keras
@@ -166,11 +168,10 @@ if __name__ == '__main__':
         :return: The input image resized to the desired size as np array.
         """
         pil_img = deprocess_image_inception(img)
-        factors = (float(size[0]) / img.shape[1],
-                   float(size[1]) / img.shape[2])
-        return np.array(img.resize(factors))
+        new_size = (1, int(size[0]), int(size[1]), 3)
+        return np.array(img).resize(new_size, refcheck=False)
 
-    def save_img(img, fname):
+    def save_img(img, fname, inception=True):
         """
         Saves the image using the Pillos.Image library and the deprocess_image function.
 
@@ -178,7 +179,10 @@ if __name__ == '__main__':
         :param fname: Filename for the new image
         :return: None
         """
-        pil_image = deprocess_image_inception(np.copy(img))
+        if inception:
+            pil_image = Image.fromarray(deprocess_image_inception(np.copy(img)))
+        else:
+            pil_image = Image.fromarray(deprocess_image_vgg19(np.copy(img)))
         pil_image.save(fname)
 
     def preprocess_image_inception(image_path):
@@ -238,6 +242,7 @@ if __name__ == '__main__':
         :param x:
         :return:
         """
+        x = x.astype('float64')
         x[:, :, 0] += 103.939
         x[:, :, 1] += 116.779
         x[:, :, 2] += 123.68
@@ -262,6 +267,9 @@ if __name__ == '__main__':
                fashion.
             -> The input images are processed at different scales (called octaves), which improves the quality of the
                visualisations.
+               
+               
+        This function does not work due to version issues.
 
         :return: None
         """
@@ -292,7 +300,7 @@ if __name__ == '__main__':
             # Define the scaling factor and add the L2 norm of the features of a layer to the loss. You avoid boarder
             # artifacts by involving non-boarder pixels in the loss.
             scaling = K.prod(K.cast(K.shape(activation), 'float32'))
-            loss += coeff * K.sum(K.square(activation[:, 2: -2, 2: -2, :])) / scaling
+            loss = loss + coeff * K.sum(K.square(activation[:, 2: -2, 2: -2, :])) / scaling
 
         # Now we can set up the gradient ascent process.
         dream = model.input
@@ -347,10 +355,12 @@ if __name__ == '__main__':
         iterations = 20
 
         max_loss = 10.0
-        base_image_path = '/European_Landscape.jpg'
+        base_image_path = 'C:\\Users\\owatkins\\OneDrive - Analog Devices, Inc\\Documents\\Project Folder\\Tutorials and Courses\\Deep Learning with Python\\European_Landscape.jpg'
+        print("Loading Base Image...")
 
         # Load the base image into Numpy array.
         img = preprocess_image_inception(base_image_path)
+        print(f"Image Preprocessed: {img.dtype} of size: {img.shape}")
 
         # Prepare a list of shape tuples defining the different scales at which to run gradient ascent.
         original_shape = img.shape[1:3]
@@ -387,10 +397,10 @@ if __name__ == '__main__':
             # octave
             img += lost_detail
             shrunk_original_image = resize_img(original_img, shape)
-            save_img(img, fname='/dream_at_scale_' + str(shape) + '.png')
+            save_img(img, fname='C:\\Users\\owatkins\\OneDrive - Analog Devices, Inc\\Documents\\Project Folder\\Tutorials and Courses\\Deep Learning with Python\\dream_at_scale_' + str(shape) + '.png')
 
         # Save the final dream.
-        save_img(img, fname='/Final_Dream.png')
+        save_img(img, fname='C:\\Users\\owatkins\\OneDrive - Analog Devices, Inc\\Documents\\Project Folder\\Tutorials and Courses\\Deep Learning with Python\\Final_Dream.png')
 
     def neural_style_transfer():
         """
@@ -410,8 +420,8 @@ if __name__ == '__main__':
         :return: None
         """
         # Provide the paths to the required images
-        target_image_path = '/European_Landscape.jpg'
-        style_reference_image_path = '/Landscape_Art_Reference.jpg'
+        target_image_path = 'C:\\Users\\owatkins\\OneDrive - Analog Devices, Inc\\Documents\\Project Folder\\Tutorials and Courses\\Deep Learning with Python\\European_Landscape.jpg'
+        style_reference_image_path = 'C:\\Users\\owatkins\\OneDrive - Analog Devices, Inc\\Documents\\Project Folder\\Tutorials and Courses\\Deep Learning with Python\\Landscape_Art_Reference.jpg'
 
         # Extract the dimensions of the target image, use them to determine the size of the generated image.
         width, height = image.load_img(target_image_path).size
@@ -465,7 +475,6 @@ if __name__ == '__main__':
             channels = 3
             size = img_height * img_width
             return K.sum(K.square(S - C)) / (4.0 * (channels ** 2) * (size ** 2))
-
         def total_variation_loss(x):
             """
             Compute the total variation loss of the input.
@@ -476,7 +485,124 @@ if __name__ == '__main__':
             a = K.square(x[:, :img_height - 1, :img_width - 1, :] - x[:, 1:, :img_width-1, :])
             b = K.square(x[:, :img_height - 1, :img_width - 1, :] - x[:, :img_height-1, 1:, :])
             return K.sum(K.pow(a + b, 1.25))
+            
+        # Dictionary that maps layer names to activation tensors.
+        output_dict = dict([(layer.name, layer.output) for layer in model.layers])
+        
+        # Layers used to measure both the content and style similarities.
+        content_layer =   'block5_conv2'
+        style_layers = ['block1_conv1', 'block2_conv1', 'block3_conv1', 'block4_conv1', 'block5_conv1']
+        
+        # Weights applied to each loss style.
+        total_variation_weight = 1e-4
+        style_weight = 1.0
+        content_weight = 0.025
+        
+        # You'll define the loss by adding all components to this variable.
+        loss = K.variable(0.0)
+        
+        # Add the Content Loss
+        layer_features = output_dict[content_layer]
+        target_image_features = layer_features[0, :, :, :]
+        combination_features = layer_features[2, :, :, :]
+        loss = loss + (content_weight * content_loss(target_image_features, combination_features))
+        
+        # Add the Style Loss
+        for layer_name in style_layers:
+            layer_features = output_dict[layer_name]
+            style_reference_features = layer_features[1, :, :, :]
+            combination_features = layer_features[2, :, :, :]
+            s1 = style_loss(style_reference_features, combination_features)
+            loss = loss + ((style_weight / len(style_layers)) * s1)
+            
+        # Add the total variation loss
+        loss = loss + (total_variation_weight * total_variation_loss(combination_image))
+        
+        # Now let's setup the gradient descent process. The particular process we want to use comes packaged in SciPy,
+        # however due to the limitations of the packaged process we'll define our own class called Extractor to handle
+        # computing the loss and gradient values without running redundant computations.
+        grads = K.gradients(loss, combination_image)[0]
+        fetch_loss_and_grads = K.function([combination_image], [loss, grads])
+        
+        class Evaluator(object):
+            
+            def __init__(self):
+                self.loss_value = None
+                self.grads_values = None
+                
+            def loss(self, x):
+                assert self.loss_value is None
+                x = x.reshape((1, img_height, img_width, 3))
+                outs = fetch_loss_and_grads([x])
+                loss_value = outs[0]
+                grads_value = outs[1].flatten().astype('float64')
+                self.loss_value = loss_value
+                self.grads_values = grads_value
+                return self.loss_value
+                
+            def grads(self, x):
+                assert self.loss_value is not None
+                grads_values = np.copy(self.grads_values)
+                self.loss_value = None
+                self.grads_values = None
+                return grads_values
+                
+        evaluator = Evaluator()
+        
+        # Now let's attempt training
+        result_prefix = 'C:\\Users\\owatkins\\OneDrive - Analog Devices, Inc\\Documents\\Project Folder\\Tutorials and Courses\\Deep Learning with Python\\my_result'
+        iterations = 20
+        
+        x = preprocess_image_vgg19(target_image_path, img_height, img_width)
+        x = x.flatten()
+        
+        for i in range(iterations):
+            print(f"Start of iteration {i}")
+            start_time = time.time()
+            x, min_val, info = fmin_l_bfgs_b(evaluator.loss, x, fprime=evaluator.grads, maxfun=20)
+            print(f"Current Loss value: {min_val}")
+            img = x.copy().reshape((img_height, img_width, 3))
+            img = deprocess_image_vgg19(img)
+            fname = result_prefix + '_at_iteration_%d.png' % i
+            save_img(img, fname, False)
+            print(f"Image saved as: {fname}")
+            end_time = time.time()
+            print(f"Iteration {i} completed in {end_time - start_time}s")
+            
+    def variational_auto_encoder():
+        """
+        This function will detail an example of creating, training and using a Variational Autoencoder (VAE).
+        For the sake of easy programming and speedy computations we'll use the MNIST dataset in this example.
+        
+        :return: None
+        """
+        
+        img_shape = (28, 28, 1)
+        batch_size = 16
+        latent_dim = 2
+        
+        input_img = keras.Input(shape=img_shape)
+        
+        x = layers.Conv2D(32, 3, padding='same', activation='relu')(input_img)
+        x = layers.Conv2D(64, 3, padding='same', activation='relu', strides=(2, 2))(x)
+        x = layers.Conv2D(64, 3, padding='same', activation='relu')(x)
+        x = layers.Conv2D(64, 3, padding='same', activation='relu')(x)
+        
+        shape_before_flattening = K.int_shape(x)
+        
+        x = layers.Flatten()(x)
+        z_mean = layers.Dense(latent_dim)(x)
+        z_log_var = layers.Dense(latent_dim)(x)
+        
+        def sampling(args):
+            z_mean, z_log_var = args
+            epsilon = K.random_normal(shape=(K.shape(z_mean)[0], latent_dim), mean=0.0, stddev=1.0)
+            
+            return z_mean + K.exp(z_log_var) * epsilon
+            
+        z = layers.Lambda(sampling)([z_mean, z_log_var])
 
 
     # text_generation()
-    deep_dream()
+    # deep_dream()
+    # neural_style_transfer()
