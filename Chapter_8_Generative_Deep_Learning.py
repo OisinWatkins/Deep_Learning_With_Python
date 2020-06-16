@@ -13,7 +13,10 @@ import time
 from scipy.optimize import fmin_l_bfgs_b
 import numpy as np
 from PIL import Image
+import matplotlib.pyplot as plt
+from scipy.stats import norm
 from tensorflow import keras
+from tensorflow.keras.datasets import mnist
 from tensorflow.keras import models, layers
 from tensorflow.keras.applications import inception_v3, vgg19
 from tensorflow.keras import backend as K
@@ -475,6 +478,7 @@ if __name__ == '__main__':
             channels = 3
             size = img_height * img_width
             return K.sum(K.square(S - C)) / (4.0 * (channels ** 2) * (size ** 2))
+
         def total_variation_loss(x):
             """
             Compute the total variation loss of the input.
@@ -577,17 +581,21 @@ if __name__ == '__main__':
         :return: None
         """
         
+        # Prepare the input layers of the Encoder to handle MNIST dataset.
         img_shape = (28, 28, 1)
         batch_size = 16
         latent_dim = 2
         
         input_img = keras.Input(shape=img_shape)
         
+        # Now let's provide a collection of layers to handle encoding the image input.
         x = layers.Conv2D(32, 3, padding='same', activation='relu')(input_img)
         x = layers.Conv2D(64, 3, padding='same', activation='relu', strides=(2, 2))(x)
         x = layers.Conv2D(64, 3, padding='same', activation='relu')(x)
         x = layers.Conv2D(64, 3, padding='same', activation='relu')(x)
         
+        # Finally let's encode the image input using Dense layers. Be sure to grab the shape of the Tensor
+        # before flattening for use later.
         shape_before_flattening = K.int_shape(x)
         
         x = layers.Flatten()(x)
@@ -595,14 +603,118 @@ if __name__ == '__main__':
         z_log_var = layers.Dense(latent_dim)(x)
         
         def sampling(args):
+            """
+            This function will encode and sample the encoding space. We'll use this function in a Lambda 
+            layer later.
+            
+            :param: args:
+            :return: A sampled point in the encoded space.
+            """
             z_mean, z_log_var = args
             epsilon = K.random_normal(shape=(K.shape(z_mean)[0], latent_dim), mean=0.0, stddev=1.0)
             
             return z_mean + K.exp(z_log_var) * epsilon
-            
+        
+        # Use the sampling function in a Lambda layer.
         z = layers.Lambda(sampling)([z_mean, z_log_var])
+        
+        # Now let's make the decoder.
+        decoder_input = layers.Input(K.int_shape(z)[1:])
+        
+        # Upsanple the image.
+        x = layers.Dense(np.prod(shape_before_flattening[1:]), 
+                         activation='relu')(decoder_input)
+                         
+        # Reshape z to match the shape of z prior to flattening.
+        x = layers.Reshape(shape_before_flattening[1:])(x)
+                         
+        # Use a Conv2DTranspose and a Conv2D to decode z into an output that's the same size as the input.
+        x = layers.Conv2DTranspose(32, 3, padding='same', activation='relu', strides=(2, 2))(x)
+        x = layers.Conv2D(1, 3, padding='same', activation='sigmoid')(x)
+        
+        # Build the decoder model and define the decoder output.
+        decoder = models.Model(decoder_input, x)
+        z_decoded = decoder(z)
+        
+        # The dual loss of a VAE doesn't fit the tradional expectation of a sample-wise function of the normal format
+        # loss(input, target). Thus we'll need to setup the loss by writing a custom layer that internally uses a 
+        # built-in add_loss layer method to create an arbitrary loss.
+        class CustomVariationLayer(keras.layers.Layer):
+        
+            def vae_loss(self, x, z_decoded):
+                """
+                Custom loss function for VAE's
+                
+                :param: self:
+                :param: x:
+                :param: z_decoded:
+                :return:
+                """
+                x = K.flatten(x)
+                z_decoded = K.flatten(z_decoded)
+                xent_loss = keras.metrics.binary_crossentropy(x, z_decoded)
+                kl_loss = -5e-4 * K.mean(1 + z_log_var - K.square(z_mean) - K.exp(z_log_var), axis=-1)
+                return K.mean(xent_loss + kl_loss)
+                
+            def call(self, inputs, **kwargs):
+                """
+                This function is used to implement the custom VAE loss function defined above. The output from the
+                function is not needed by the caller, however the function is required to return something.
 
+                :param: self: CustomVariationLayer object
+                :param: inputs: A list containing both the input values and the decoded values.
+                :return: Anything, the function output isn't used by the caller.
+                """
+                x = inputs[0]
+                z_decoded = inputs[1]
+                loss = self.vae_loss(x, z_decoded)
+                self.add_loss(loss, inputs=inputs)
+                return x
+
+        y = CustomVariationLayer()([input_img, z_decoded])
+
+        # Now let's compile and train the model.
+        vae = models.Model(input_img, y)
+        vae.compile(optimizer='rmsprop', loss=None)
+        vae.summary()
+
+        (x_train, _), (x_test, y_test) = mnist.load_data()
+
+        x_train = x_train.astype('float32') / 255.0
+        x_train = x_train.reshape(x_train.shape + (1,))
+        x_test = x_test.astype('float32') / 255.0
+        x_test = x_test.reshape(x_test.shape + (1,))
+
+        vae.fit(x=x_train, y=None, shuffle=True, epochs=10, batch_size=batch_size, validation_data=(x_test, None))
+
+        # Display a grid of 15 x 15 digits (255 digits total).
+        n = 15
+        digit_size = 28
+        figure = np.zeros((digit_size * n, digit_size * n))
+
+        # Transforms linearly spaced coordinates using SciPy ppf function to produce values of the latent variable z
+        # (because the prior of the latent space is Gaussian)
+        grid_x = norm.ppf(np.linspace(0.05, 0.95, n))
+        grid_y = norm.ppf(np.linspace(0.05, 0.95, n))
+
+        for i, yi in enumerate(grid_x):
+            for j, xi in enumerate(grid_y):
+                # Repeats z multiple times to form a complete batch
+                z_sample = np.array([[xi, yi]])
+                z_sample = np.tile(z_sample, batch_size).reshape(batch_size, 2)
+
+                # decodes the batch in digit images
+                x_decoded = decoder.predict(z_sample, batch_size=batch_size)
+                # Reshapes the first digit in the batch from 28 x 28 x 1 to 28 x 28
+                digit = x_decoded[0].reshape(digit_size, digit_size)
+                figure[i * digit_size: (i + 1) * digit_size, j * digit_size: (j + 1) * digit_size] = digit
+
+        # Plot the figure in shades of Grey.
+        plt.figure(figsize=(10, 10))
+        plt.imshow(figure, cmap='Greys_r')
+        plt.show()
 
     # text_generation()
     # deep_dream()
     # neural_style_transfer()
+    # variational_auto_encoder()
