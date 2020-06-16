@@ -8,6 +8,7 @@ This chapter covers:
     -> Variational Autoencoders
     -> Understanding Generative Adversarial Networks
 """
+import os
 import sys
 import time
 from scipy.optimize import fmin_l_bfgs_b
@@ -16,7 +17,7 @@ from PIL import Image
 import matplotlib.pyplot as plt
 from scipy.stats import norm
 from tensorflow import keras
-from tensorflow.keras.datasets import mnist
+from tensorflow.keras.datasets import mnist, cifar10
 from tensorflow.keras import models, layers
 from tensorflow.keras.applications import inception_v3, vgg19
 from tensorflow.keras import backend as K
@@ -714,7 +715,163 @@ if __name__ == '__main__':
         plt.imshow(figure, cmap='Greys_r')
         plt.show()
 
+    def generative_adversarial_networks():
+        """
+        This section details the design, training and deployment of Generative Adversarial Networks (GAN's).
+        When building a GAN it is a good idea to search for design hints and tips, such as those provided in this
+        chapter. More exhaustive searches will result in more useful tips, but designing GAN's is notoriously difficult.
+
+        We'll use the CIFAR10 dataset for this example.
+
+        :return: None
+        """
+        # Let's start by building the Generator model.
+        latent_dim = 32
+        height = 32
+        width = 32
+        channels = 3
+
+        generator_input = keras.Input(shape=(latent_dim,))
+
+        # Transform the input to a 16 x 16 28 channel feature map.
+        x = layers.Dense(128 * 16 * 16)(generator_input)
+        x = layers.LeakyReLU()(x)
+        x = layers.Reshape((16, 16, 128))(x)
+
+        x = layers.Conv2D(256, 5, padding='same')(x)
+        x = layers.LeakyReLU()(x)
+
+        # Upsample to 32 x 32.
+        x = layers.Conv2DTranspose(256, 4, strides=2, padding='same')(x)
+        x = layers.LeakyReLU()(x)
+
+        x = layers.Conv2D(256, 5, padding='same')(x)
+        x = layers.LeakyReLU()(x)
+        x = layers.Conv2D(256, 5, padding='same')(x)
+        x = layers.LeakyReLU()(x)
+
+        # Produce a 32 x 32 1-channel feature map, same shape as the CIFAR10 dataset
+        x = layers.Conv2D(channels, 7, activation='tanh', padding='same')(x)
+
+        # Now instantiate the generator model, which maps a vector of shape (latent_dm,) to an image of shape
+        # (32 x 32 x 3)
+        generator = models.Model(generator_input, x)
+        generator.summary()
+
+        # Now let's build a discriminator (adversary) network.
+        discriminator_input = keras.Input(shape=(height, width, channels))
+        x = layers.Conv2D(128, 3)(discriminator_input)
+        x = layers.LeakyReLU()(x)
+        x = layers.Conv2D(128, 4, strides=2)(x)
+        x = layers.LeakyReLU()(x)
+        x = layers.Conv2D(128, 4, strides=2)(x)
+        x = layers.LeakyReLU()(x)
+        x = layers.Conv2D(128, 4, strides=2)(x)
+        x = layers.LeakyReLU()(x)
+        x = layers.Flatten()(x)
+
+        # One dropout layer, very important trick. Then add a classification layer.
+        x = layers.Dropout(0.4)(x)
+        x = layers.Dense(1, activation='sigmoid')(x)
+
+        # Instantiate the discriminator model, which takes a 32 x 32 x 3 image and provides a binary score: Real/Fake.
+        discriminator = models.Model(discriminator_input, x)
+        discriminator.summary()
+
+        # Provide an RMSprop optimizer with gradient clipping (by value) and learning-rate decay for stability.
+        # Then compile the model.
+        discriminator_optimizer = keras.optimizers.RMSprop(lr=0.0008, clipvalue=1.0, decay=1e-8)
+        discriminator.compile(optimizer=discriminator_optimizer, loss='binary_crossentropy')
+
+        # Be very careful when training a GAN. The goal is to have a generator which is good enough to get the
+        # discriminator to predict 'real' for a fake image. To achieve this, while training the GAN the discriminator
+        # cannot be allowed to train. If this is not done you'd end up training the discriminator to ALWAYS predict
+        # 'real', which helps no one.
+        discriminator.trainable = False
+
+        gan_input = keras.Input(shape=(latent_dim,))
+        gan_output = discriminator(generator(gan_input))
+        gan = models.Model(gan_input, gan_output)
+
+        gan_optimizer = keras.optimizers.RMSprop(lr=0.0004, clipvalue=1.0, decay=1e-8)
+        gan.compile(optimizer=gan_optimizer, loss='binary_crossentropy')
+
+        # How to train a GAN:
+        #   1) Draw random points in the latent space (random noise).
+        #   2) Generate images with the generator using this random noise.
+        #   3) Mix the generated images with real ones.
+        #   4) Train discriminator using these mixed images, with corresponding targets: either "real" (dataset images)
+        #      or "fake" (generated images).
+        #   5) Draw new random points in the latent space.
+        #   6) Train gan using these random vectors, with targets that all say "these are real images". This updates the
+        #      weights of the generator (only, because the discriminator is frozen inside gan) to move toward getting
+        #      the discriminator to predict "these images are real" for generated images, ie: this trains the generator
+        #      to fool the discriminator.
+
+        # Now let's load the cifar10 dataset and only use the "frog" class.
+        (x_train, y_train), (_, _) = cifar10.load_data()
+        x_train = x_train[y_train.flatten() == 6]
+
+        # Normalise data
+        x_train = x_train.reshape((x_train.shape[0],) + (height, width, channels)).astype('float32') / 255.0
+
+        # The save_dir is where samples of generated images will be saved to.
+        iterations = 10000
+        batch_size = 20
+        save_dir = 'C:\\Users\\owatkins\\OneDrive - Analog Devices, Inc\\Documents\\Project Folder\\' \
+                   'Tutorials and Courses\\Deep Learning with Python\\gan_images'
+
+        start = 0
+        for step in range(iterations):
+            # Sample random points in the latent space.
+            random_latent_vectors = np.random.normal(size=(batch_size, latent_dim))
+
+            # Generate some images.
+            generated_images = generator.predict(random_latent_vectors)
+
+            # Concatenate generated and real images into one batch, as well as create a training target tensor called
+            # labels
+            stop = start + batch_size
+            real_images = x_train[start: stop]
+            combined_images = np.concatenate([generated_images, real_images])
+
+            labels = np.concatenate([np.ones((batch_size, 1)), np.zeros((batch_size, 1))])
+            labels += 0.05 * np.random.random(labels.shape)
+
+            # Train the discriminator first, only on a single batch.
+            d_loss = discriminator.train_on_batch(combined_images, labels)
+
+            # Sample the latent space again. This time label each images as real.
+            random_latent_vectors = np.random.normal(size=(batch_size, latent_dim))
+            misleading_targets = np.zeros((batch_size, 1))
+
+            # Train the generator only to make better images.
+            a_loss = gan.train_on_batch(random_latent_vectors, misleading_targets)
+
+            start += batch_size
+            if start > len(x_train) - batch_size:
+                start = 0
+
+            # Every 100 steps save the network weights and some sample images for reference.
+            if step % 100 == 0:
+                gan.save_weights('C:\\Users\\owatkins\\OneDrive - Analog Devices, Inc\\Documents\\Project Folder\\'
+                                 'Tutorials and Courses\\Deep Learning with Python\\gan_progress\\gan_' + str(step) + '.h5')
+
+                print(f"discriminator loss: {d_loss}")
+                print(f"adversarial loss: {a_loss}")
+
+                img = image.array_to_img(generated_images[0] * 255.0, scale=False)
+                img.save(os.path.join(save_dir, 'generated_frog_' + str(step) + '.png'))
+
+                img = image.array_to_img(real_images[0] * 255.0, scale=False)
+                img.save(os.path.join(save_dir, 'real_frog_' + str(step) + '.png'))
+
+        # Save the final model.
+        gan.save('C:\\Users\\owatkins\\OneDrive - Analog Devices, Inc\\Documents\\Project Folder\\'
+                 'Tutorials and Courses\\Deep Learning with Python\\gan_progress\\gan_final.h5')
+
     # text_generation()
     # deep_dream()
     # neural_style_transfer()
     # variational_auto_encoder()
+    generative_adversarial_networks()
